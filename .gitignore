@@ -1,0 +1,11 @@
+
+# Exe files
+*.exe
+
+# Exe file on Linux
+odin-nvml
+
+# Lib files
+*.so
+*.dll
+*.lib
