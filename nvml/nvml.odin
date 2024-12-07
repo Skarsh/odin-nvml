@@ -1,11 +1,10 @@
 package nvml
 
 import "core:c"
+import "core:fmt"
 
-// TODO(Thomas): This path only works because I have the `.so` file in the
-// this directory. This should come from the user's system instead.
 when ODIN_OS == .Linux {
-	foreign import nvml "linux/libnvidia-ml.so"
+	foreign import nvml "system:libnvidia-ml.so"
 }
 
 nvmlReturn_t :: distinct c.int
@@ -112,17 +111,28 @@ to_error :: proc(code: nvmlReturn_t) -> Nvml_Error {
     }
 }
 
-Nvml_Init_Flag :: enum {
-    No_Attach = 1,
-    No_GPUS = 2
-}
+// Define flags
+No_Attach_Flag ::  1
+No_GPUS_Flag :: 2
 
 @(default_calling_convention="c")
 foreign nvml {
+    // Init
     nvmlInit_v2 :: proc() -> nvmlReturn_t ---
     nvmlShutdown :: proc() -> nvmlReturn_t ---  
     nvmlInitWithFlags :: proc(flags: c.uint) -> nvmlReturn_t ---
+
+    // System - Cuda
+    nvmlSystemGetCudaDriverVersion :: proc(cudaDriverVersion: ^c.int) -> nvmlReturn_t ---
+    nvmlSystemGetCudaDriverVersion_v2 :: proc(cudaDriverVersion: [^]c.int) -> nvmlReturn_t ---
+
+    // System - Graphics
+    nvmlSystemGetDriverVersion :: proc(version: [^]c.char, length: c.uint) -> nvmlReturn_t ---
+
+
 }
+
+// ---------------------- Initialization ----------------------
 
 // Initialize NVML, but don't initialize any GPUs yet.
 init :: proc() -> Nvml_Error {
@@ -136,4 +146,35 @@ init_with_flags :: proc(flags: u32) -> Nvml_Error {
 // Shut down NVML by releasing all GPU resources previously allocated with `init`.
 shutdown :: proc() -> Nvml_Error {
     return to_error(nvmlShutdown())
+}
+
+
+
+// ---------------------- System Queries ----------------------
+
+// Retrieves the version of the CUDA driver
+get_cuda_driver_version :: proc() -> (Cuda_Driver_Version, Nvml_Error) {
+    version : c.int
+    result := to_error(nvmlSystemGetCudaDriverVersion(&version))
+
+    if result != .Success {
+        return Cuda_Driver_Version{}, result
+    }
+    
+    driver_version := format_driver_version(int(version))
+
+    return driver_version, result
+}
+
+// ---------------------- Helper / Convenicence procedures and structures ----------------------
+Cuda_Driver_Version :: struct {
+    major: int,
+    minor: int
+}
+
+format_driver_version :: proc(version: int) -> Cuda_Driver_Version {
+    major := version / 1000
+    minor := (version % 1000) / 10
+    cuda_version := Cuda_Driver_Version{major, minor }
+    return cuda_version
 }
