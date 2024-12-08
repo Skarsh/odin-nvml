@@ -35,7 +35,7 @@ load_nvml_lib :: proc() -> bool {
 	when ODIN_OS == .Windows {
 		lib_name = "nvml.dll"
 	} else {
-		lib_name = "libnvidia-ml.so"
+		lib_name = "libnvidia-ml.so.1"
 	}
 
 	fmt.println("lib_name: ", lib_name)
