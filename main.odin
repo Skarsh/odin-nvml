@@ -17,12 +17,16 @@ main :: proc() {
 	init_result := nvml.init()
 	fmt.println("init_result: ", init_result)
 
-	cuda_driver_version, err := nvml.get_cuda_driver_version()
+	cuda_driver_version, cuda_driver_err := nvml.get_system_cuda_driver_version()
 	fmt.println("cuda_driver_version: ", cuda_driver_version)
+
+	graphics_driver_version, driver_err := nvml.get_system_driver_version()
+	if driver_err != .Success {
+		fmt.eprintln("driver_err: ", driver_err)
+	}
+	fmt.println("graphics_driver_version: ", graphics_driver_version)
 
 
 	shutdown_result := nvml.shutdown()
 	fmt.println("shutdown_result: ", shutdown_result)
-
-
 }

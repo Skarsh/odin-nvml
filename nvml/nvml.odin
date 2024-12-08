@@ -3,6 +3,7 @@ package nvml
 import "core:c"
 import "core:dynlib"
 import "core:fmt"
+import "core:strings"
 import "core:sys/windows"
 
 
@@ -265,7 +266,7 @@ shutdown :: proc() -> Nvml_Error {
 // ---------------------- System Queries ----------------------
 
 // Retrieves the version of the CUDA driver
-get_cuda_driver_version :: proc() -> (Cuda_Driver_Version, Nvml_Error) {
+get_system_cuda_driver_version :: proc() -> (Cuda_Driver_Version, Nvml_Error) {
 	version: c.int
 
 	if nvmlSystemGetCudaDriverVersion == nil {
@@ -279,6 +280,39 @@ get_cuda_driver_version :: proc() -> (Cuda_Driver_Version, Nvml_Error) {
 	}
 
 	return format_driver_version(int(version)), .Success
+}
+
+// Retrieves the driver branch of the NVIDIA driver installed on the system.
+get_system_driver_version :: proc() -> (version: string, err: Nvml_Error) {
+	// Allocate buffer for the version string
+	buffer: [SYSTEM_DRIVER_VERSION_BUFFER_SIZE]c.char
+
+	if nvmlSystemGetDriverVersion == nil {
+		return "", .Library_Not_Found
+	}
+
+	// Call NVML to get the driver version
+	result := nvmlSystemGetDriverVersion(raw_data(buffer[:]), SYSTEM_DRIVER_VERSION_BUFFER_SIZE)
+
+	if err = to_error(result); err != .Success {
+		return "", err
+	}
+
+	// Count the actual string length until null terminator
+	length := 0
+	for c in buffer {
+		if c == 0 {
+			break
+		}
+		length += 1
+	}
+
+	// Create a persistent copy of the string
+	if length > 0 {
+		version = strings.clone(string(buffer[:length]))
+	}
+
+	return version, .Success
 }
 
 // ---------------------- Helper / Convenicence procedures and structures ----------------------
