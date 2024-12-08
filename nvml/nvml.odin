@@ -4,7 +4,7 @@ import "core:c"
 import "core:fmt"
 
 when ODIN_OS == .Linux {
-	foreign import nvml "system:libnvidia-ml.so"
+	foreign import nvml "system:libnvidia-ml.so.1"
 }
 
 nvmlReturn_t :: distinct c.int
