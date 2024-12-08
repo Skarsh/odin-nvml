@@ -8,6 +8,12 @@ main :: proc() {
 	// Initialize NVML
 	fmt.println("hellope")
 
+	lib_loaded := nvml.load_nvml_lib()
+	if !lib_loaded {
+		fmt.eprintln("NVML library not loaded, cannot proceed!")
+		return
+	}
+
 	init_result := nvml.init()
 	fmt.println("init_result: ", init_result)
 

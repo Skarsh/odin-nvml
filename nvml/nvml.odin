@@ -1,13 +1,103 @@
 package nvml
 
 import "core:c"
+import "core:dynlib"
 import "core:fmt"
+import "core:sys/windows"
 
-when ODIN_OS == .Linux {
-	foreign import nvml "system:libnvidia-ml.so.1"
-}
 
 nvmlReturn_t :: distinct c.int
+
+nvml_handle: dynlib.Library
+
+// Function pointer types
+nvmlInit_v2_t :: #type proc() -> nvmlReturn_t
+nvmlShutdown_t :: #type proc() -> nvmlReturn_t
+nvmlInitWithFlags_t :: #type proc(flags: c.uint) -> nvmlReturn_t
+nvmlSystemGetCudaDriverVersion_t :: #type proc(cudaDriverVersion: ^c.int) -> nvmlReturn_t
+nvmlSystemGetCudaDriverVersion_v2_t :: #type proc(cudaDriverVersion: [^]c.int) -> nvmlReturn_t
+nvmlSystemGetDriverVersion_t :: #type proc(version: [^]c.char, length: c.uint) -> nvmlReturn_t
+
+// Function pointers
+nvmlInit_v2: nvmlInit_v2_t
+nvmlShutdown: nvmlShutdown_t
+nvmlInitWithFlags: nvmlInitWithFlags_t
+nvmlSystemGetCudaDriverVersion: nvmlSystemGetCudaDriverVersion_t
+nvmlSystemGetCudaDriverVersion_v2: nvmlSystemGetCudaDriverVersion_v2_t
+nvmlSystemGetDriverVersion: nvmlSystemGetDriverVersion_t
+
+load_nvml_lib :: proc() -> bool {
+	if nvml_handle != nil {
+		return true
+	}
+
+	lib_name: string
+	when ODIN_OS == .Windows {
+		lib_name = "nvml.dll"
+	} else {
+		lib_name = "libnvidia-ml.so"
+	}
+
+	fmt.println("lib_name: ", lib_name)
+	handle, loaded := dynlib.load_library(lib_name)
+	if !loaded {
+		fmt.eprintln("Failed to load NVML: ", dynlib.last_error())
+		return false
+	}
+
+	nvml_handle = handle
+	return true
+}
+
+unload_nvml_lib :: proc() -> bool {
+	if nvml_handle != nil {
+		return false
+	}
+	return dynlib.unload_library(nvml_handle)
+}
+
+get_proc_address :: proc(name: cstring) -> rawptr {
+	if nvml_handle == nil {
+		return nil
+	}
+
+	ptr, found := dynlib.symbol_address(nvml_handle, string(name))
+
+	if !found {
+		fmt.eprintfln("Failed to find symbol {} : {}", string(name), dynlib.last_error())
+		return nil
+	}
+
+	return ptr
+}
+
+init_function_pointers :: proc() -> bool {
+	if !load_nvml_lib() {
+		return false
+	}
+
+	nvmlInit_v2 = cast(nvmlInit_v2_t)get_proc_address("nvmlInit_v2")
+	nvmlShutdown = cast(nvmlShutdown_t)get_proc_address("nvmlShutdown")
+	nvmlInitWithFlags = cast(nvmlInitWithFlags_t)get_proc_address("nvmlInitWithFlags")
+	nvmlSystemGetCudaDriverVersion =
+	cast(nvmlSystemGetCudaDriverVersion_t)get_proc_address("nvmlSystemGetCudaDriverVersion")
+	nvmlSystemGetCudaDriverVersion_v2 =
+	cast(nvmlSystemGetCudaDriverVersion_v2_t)get_proc_address("nvmlSystemGetCudaDriverVersion_v2")
+	nvmlSystemGetDriverVersion =
+	cast(nvmlSystemGetDriverVersion_t)get_proc_address("nvmlSystemGetDriverVersion")
+
+	return(
+		nvmlInit_v2 != nil &&
+		nvmlShutdown != nil &&
+		nvmlInitWithFlags != nil &&
+		nvmlSystemGetCudaDriverVersion != nil &&
+		nvmlSystemGetCudaDriverVersion_v2 != nil &&
+		nvmlSystemGetDriverVersion != nil \
+	)
+
+}
+
+// Public API
 
 Nvml_Error :: enum {
 	// The operation was successful
@@ -73,7 +163,6 @@ Nvml_Error :: enum {
 	// An internal driver error occurred. 
 	Unknown,
 }
-
 
 to_error :: proc(code: nvmlReturn_t) -> Nvml_Error {
 	switch code {
@@ -145,54 +234,51 @@ to_error :: proc(code: nvmlReturn_t) -> Nvml_Error {
 No_Attach_Flag :: 1
 No_GPUS_Flag :: 2
 
-@(default_calling_convention = "c")
-foreign nvml {
-	// Init
-	nvmlInit_v2 :: proc() -> nvmlReturn_t ---
-	nvmlShutdown :: proc() -> nvmlReturn_t ---
-	nvmlInitWithFlags :: proc(flags: c.uint) -> nvmlReturn_t ---
-
-	// System - Cuda
-	nvmlSystemGetCudaDriverVersion :: proc(cudaDriverVersion: ^c.int) -> nvmlReturn_t ---
-	nvmlSystemGetCudaDriverVersion_v2 :: proc(cudaDriverVersion: [^]c.int) -> nvmlReturn_t ---
-
-	// System - Graphics
-	nvmlSystemGetDriverVersion :: proc(version: [^]c.char, length: c.uint) -> nvmlReturn_t ---
-
-
-}
 
 // ---------------------- Initialization ----------------------
 
 // Initialize NVML, but don't initialize any GPUs yet.
+// TODO(Thomas): call load_nvml_lib here?
 init :: proc() -> Nvml_Error {
+	if !init_function_pointers() {
+		return .Library_Not_Found
+	}
 	return to_error(nvmlInit_v2())
 }
 
 init_with_flags :: proc(flags: u32) -> Nvml_Error {
+	if !init_function_pointers() {
+		return .Library_Not_Found
+	}
 	return to_error(nvmlInitWithFlags(flags))
 }
 
 // Shut down NVML by releasing all GPU resources previously allocated with `init`.
+// TODO(Thomas): call unload_load_nvml_lib here?
 shutdown :: proc() -> Nvml_Error {
+	if nvmlShutdown == nil {
+		return .Library_Not_Found
+	}
 	return to_error(nvmlShutdown())
 }
-
 
 // ---------------------- System Queries ----------------------
 
 // Retrieves the version of the CUDA driver
 get_cuda_driver_version :: proc() -> (Cuda_Driver_Version, Nvml_Error) {
 	version: c.int
+
+	if nvmlSystemGetCudaDriverVersion == nil {
+		return Cuda_Driver_Version{}, .Library_Not_Found
+	}
+
 	result := to_error(nvmlSystemGetCudaDriverVersion(&version))
 
 	if result != .Success {
 		return Cuda_Driver_Version{}, result
 	}
 
-	driver_version := format_driver_version(int(version))
-
-	return driver_version, result
+	return format_driver_version(int(version)), .Success
 }
 
 // ---------------------- Helper / Convenicence procedures and structures ----------------------
