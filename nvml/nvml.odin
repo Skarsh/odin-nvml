@@ -11,6 +11,7 @@ nvmlReturn_t :: distinct c.int
 
 nvml_handle: dynlib.Library
 
+// TODO(Thomas): Try using cstring instead of [^]c.char
 // Function pointer types
 nvmlInit_v2_t :: #type proc() -> nvmlReturn_t
 nvmlShutdown_t :: #type proc() -> nvmlReturn_t
@@ -18,6 +19,12 @@ nvmlInitWithFlags_t :: #type proc(flags: c.uint) -> nvmlReturn_t
 nvmlSystemGetCudaDriverVersion_t :: #type proc(cudaDriverVersion: ^c.int) -> nvmlReturn_t
 nvmlSystemGetCudaDriverVersion_v2_t :: #type proc(cudaDriverVersion: [^]c.int) -> nvmlReturn_t
 nvmlSystemGetDriverVersion_t :: #type proc(version: [^]c.char, length: c.uint) -> nvmlReturn_t
+nvmlSystemGetNvmlVersion_t :: #type proc(version: [^]c.char, length: c.uint) -> nvmlReturn_t
+nvmlSystemGetProcessName_t :: #type proc(
+	pid: c.uint,
+	name: [^]c.char,
+	length: c.uint,
+) -> nvmlReturn_t
 
 // Function pointers
 nvmlInit_v2: nvmlInit_v2_t
@@ -26,6 +33,8 @@ nvmlInitWithFlags: nvmlInitWithFlags_t
 nvmlSystemGetCudaDriverVersion: nvmlSystemGetCudaDriverVersion_t
 nvmlSystemGetCudaDriverVersion_v2: nvmlSystemGetCudaDriverVersion_v2_t
 nvmlSystemGetDriverVersion: nvmlSystemGetDriverVersion_t
+nvmlSystemGetNvmlVersion: nvmlSystemGetNvmlVersion_t
+nvmlSystemGetProcessName: nvmlSystemGetProcessName_t
 
 load_nvml_lib :: proc() -> bool {
 	if nvml_handle != nil {
@@ -86,6 +95,10 @@ init_function_pointers :: proc() -> bool {
 	cast(nvmlSystemGetCudaDriverVersion_v2_t)get_proc_address("nvmlSystemGetCudaDriverVersion_v2")
 	nvmlSystemGetDriverVersion =
 	cast(nvmlSystemGetDriverVersion_t)get_proc_address("nvmlSystemGetDriverVersion")
+	nvmlSystemGetNvmlVersion =
+	cast(nvmlSystemGetNvmlVersion_t)get_proc_address("nvmlSystemGetNVMLVersion")
+	nvmlSystemGetProcessName =
+	cast(nvmlSystemGetProcessName_t)get_proc_address("nvmlSystemGetProcessName")
 
 	return(
 		nvmlInit_v2 != nil &&
@@ -93,7 +106,9 @@ init_function_pointers :: proc() -> bool {
 		nvmlInitWithFlags != nil &&
 		nvmlSystemGetCudaDriverVersion != nil &&
 		nvmlSystemGetCudaDriverVersion_v2 != nil &&
-		nvmlSystemGetDriverVersion != nil \
+		nvmlSystemGetDriverVersion != nil &&
+		nvmlSystemGetNvmlVersion != nil &&
+		nvmlSystemGetProcessName != nil \
 	)
 
 }
@@ -283,36 +298,73 @@ get_system_cuda_driver_version :: proc() -> (Cuda_Driver_Version, Nvml_Error) {
 }
 
 // Retrieves the driver branch of the NVIDIA driver installed on the system.
-get_system_driver_version :: proc() -> (version: string, err: Nvml_Error) {
-	// Allocate buffer for the version string
+get_system_driver_version :: proc() -> (string, Nvml_Error) {
 	buffer: [SYSTEM_DRIVER_VERSION_BUFFER_SIZE]c.char
 
 	if nvmlSystemGetDriverVersion == nil {
 		return "", .Library_Not_Found
 	}
 
-	// Call NVML to get the driver version
-	result := nvmlSystemGetDriverVersion(raw_data(buffer[:]), SYSTEM_DRIVER_VERSION_BUFFER_SIZE)
+	err := to_error(
+		nvmlSystemGetDriverVersion(raw_data(buffer[:]), SYSTEM_DRIVER_VERSION_BUFFER_SIZE),
+	)
 
-	if err = to_error(result); err != .Success {
+	if err != .Success {
 		return "", err
 	}
 
-	// Count the actual string length until null terminator
-	length := 0
-	for c in buffer {
-		if c == 0 {
-			break
-		}
-		length += 1
+	// TODO: Allocation, should pass in own allocator for making it easy
+	// to free
+	version: string = strings.clone(string(cstring(&buffer[0])))
+
+	return string(version), .Success
+}
+
+// Retrieves the version of the NVML library. 
+get_system_nvml_version :: proc() -> (string, Nvml_Error) {
+	buffer: [SYSTEM_NVML_VERSION_BUFFER_SIZE]c.char
+
+	if nvmlSystemGetNvmlVersion == nil {
+		return "", .Library_Not_Found
 	}
 
-	// Create a persistent copy of the string
-	if length > 0 {
-		version = strings.clone(string(buffer[:length]))
+	err := to_error(
+		nvmlSystemGetNvmlVersion(raw_data(buffer[:]), SYSTEM_DRIVER_VERSION_BUFFER_SIZE),
+	)
+
+	if err != .Success {
+		return "", err
 	}
+
+	// TODO: Allocation, should pass in own allocator for making it easy
+	// to free
+	version: string = strings.clone(string(cstring(&buffer[0])))
 
 	return version, .Success
+}
+
+// TODO(Thomas): Hardcoded value of 80 for the length of the process name. 
+get_system_process_name :: proc(pid: uint) -> (string, Nvml_Error) {
+	MAX_SYSTEM_PROCESS_NAME_LENGTH :: 80
+	buffer: [MAX_SYSTEM_PROCESS_NAME_LENGTH]c.char
+
+	if nvmlSystemGetProcessName == nil {
+		return "", .Library_Not_Found
+	}
+
+	err := to_error(
+		nvmlSystemGetProcessName(c.uint(pid), raw_data(buffer[:]), MAX_SYSTEM_PROCESS_NAME_LENGTH),
+	)
+
+	if err != .Success {
+		return "", err
+	}
+
+	// TODO: Allocation, should pass in own allocator for making it easy
+	// to free
+	name: string = strings.clone(string(cstring(&buffer[0])))
+
+	return name, .Success
 }
 
 // ---------------------- Helper / Convenicence procedures and structures ----------------------
